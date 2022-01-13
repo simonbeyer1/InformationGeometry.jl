@@ -5,9 +5,9 @@ module InformationGeometry
 # @reexport
 using LinearAlgebra, Random, Distributions, DataFrames
 
-using Distributed, StaticArrays, SparseArrays
+using Distributed, Requires, StaticArrays, SparseArrays
 using OrdinaryDiffEq, DiffEqCallbacks, BoundaryValueDiffEq
-using ModelingToolkit, Symbolics, DataInterpolations
+using Symbolics, DataInterpolations
 using DerivableFunctionsBase
 using BenchmarkTools, LsqFit, Optim, Measurements, HCubature
 using SpecialFunctions, Tullio, Roots, Combinatorics
@@ -231,6 +231,13 @@ export SaveAdaptive, SaveConfidence, SaveGeodesics, SaveDataSet
 
 include("CustomIO.jl")
 # export GeneratedFromAutoDiff, GeneratedFromSymbolic
+
+
+
+function __init__()
+    @require ModelingToolkit = "961ee093-0014-501f-94e3-6117800e7a78" @eval include("Optionals/ModelingToolkit.jl")
+    @require LoopVectorization = "bdcacae8-1622-11e9-2a5c-532679323890" @eval include("Optionals/LoopVectorization.jl")
+end
 
 
 end # module
