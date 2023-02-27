@@ -9,17 +9,20 @@ Calculates the likelihood ``L(\\mathrm{data} \\, | \\, \\theta)`` a `DataModel` 
 likelihood(args...; kwargs...) = exp(loglikelihood(args...; kwargs...))
 
 
-
 ## Prefix underscore for likelihood, Score and FisherMetric indicates that Prior has already been accounted for upstream
-loglikelihood(DM::AbstractDataModel; kwargs...) = LogLikelihood(θ::AbstractVector{<:Number}; Kwargs...) = loglikelihood(DM, θ; kwargs..., Kwargs...)
-Negloglikelihood(DM::AbstractDataModel; kwargs...) = NegativeLogLikelihood(θ::AbstractVector{<:Number}; Kwargs...) = -loglikelihood(DM, θ; kwargs..., Kwargs...)
+
+# Employ kwargs here
+loglikelihood(DM::AbstractDataModel; kwargs...) = LogLikelihood(θ::AbstractVector{<:Number}; Kwargs...) = loglikelihood(DM)(θ; kwargs..., Kwargs...)
+Negloglikelihood(DM::AbstractDataModel; kwargs...) = NegativeLogLikelihood(θ::AbstractVector{<:Number}; Kwargs...) = -loglikelihood(DM)(θ; kwargs..., Kwargs...)
 
 # import Distributions.loglikelihood
 """
     loglikelihood(DM::DataModel, θ::AbstractVector) -> Real
 Calculates the logarithm of the likelihood ``L``, i.e. ``\\ell(\\mathrm{data} \\, | \\, \\theta) \\coloneqq \\mathrm{ln} \\big( L(\\mathrm{data} \\, | \\, \\theta) \\big)`` given a `DataModel` and a parameter configuration ``\\theta``.
 """
-loglikelihood(DM::AbstractDataModel, θ::AbstractVector{<:Number}, LogPriorFn::Union{Nothing,Function}=LogPrior(DM); kwargs...) = loglikelihood(Data(DM), Predictor(DM), θ, LogPriorFn; kwargs...)
+# loglikelihood(DM::AbstractDataModel, θ::AbstractVector{<:Number}, LogPriorFn::Union{Nothing,Function}=LogPrior(DM); kwargs...) = loglikelihood(Data(DM), Predictor(DM), θ, LogPriorFn; kwargs...)
+loglikelihood(DM::AbstractDataModel, θ::AbstractVector{<:Number}; kwargs...) = loglikelihood(DM)(θ; kwargs...)
+loglikelihood(DM::AbstractDataModel, θ::AbstractVector{<:Number}, LogPriorFn::Union{Nothing,Function}; kwargs...) = throw("No longer used.")
 
 loglikelihood(DS::AbstractDataSet, model::ModelOrFunction, θ::AbstractVector{<:Number}, LogPriorFn::Nothing; kwargs...) = _loglikelihood(DS, model, θ; kwargs...)
 loglikelihood(DS::AbstractDataSet, model::ModelOrFunction, θ::AbstractVector{<:Number}, LogPriorFn::Function; kwargs...) = _loglikelihood(DS, model, θ; kwargs...) + EvalLogPrior(LogPriorFn, θ)
@@ -97,9 +100,9 @@ end
 _AutoMetric(DS::AbstractDataSet, model::ModelOrFunction, θ::AbstractVector{<:Number}; ADmode::Union{Symbol,Val}=Val(:ForwardDiff), kwargs...) = GetHess(ADmode, x->-_loglikelihood(DS, model, x; kwargs...))(θ)
 
 
-
-Score(DM::AbstractDataModel; kwargs...) = LogLikelihoodGradient(θ::AbstractVector{<:Number}; Kwargs...) = Score(DM, θ; kwargs..., Kwargs...)
-NegScore(DM::AbstractDataModel; kwargs...) = NegativeLogLikelihoodGradient(θ::AbstractVector{<:Number}; Kwargs...) = -Score(DM, θ; kwargs..., Kwargs...)
+# Employ kwargs here
+Score(DM::AbstractDataModel; kwargs...) = LogLikelihoodGradient(θ::AbstractVector{<:Number}; Kwargs...) = Score(DM)(θ; kwargs..., Kwargs...)
+NegScore(DM::AbstractDataModel; kwargs...) = NegativeLogLikelihoodGradient(θ::AbstractVector{<:Number}; Kwargs...) = -Score(DM)(θ; kwargs..., Kwargs...)
 
 """
     Score(DM::DataModel, θ::AbstractVector{<:Number}; ADmode::Val=Val(:ForwardDiff))
@@ -107,7 +110,9 @@ Calculates the gradient of the log-likelihood ``\\ell`` with respect to a set of
 `ADmode=Val(false)` computes the Score using the Jacobian `dmodel` provided in `DM`, i.e. by having to separately evaluate both the `model` as well as `dmodel`.
 Other choices of `ADmode` directly compute the Score by differentiating the formula the log-likelihood, i.e. only one evaluation on a dual variable is performed.
 """
-Score(DM::AbstractDataModel, θ::AbstractVector{<:Number}, LogPriorFn::Union{Nothing,Function}=LogPrior(DM); kwargs...) = Score(Data(DM), Predictor(DM), dPredictor(DM), θ, LogPriorFn; kwargs...)
+# Score(DM::AbstractDataModel, θ::AbstractVector{<:Number}, LogPriorFn::Union{Nothing,Function}=LogPrior(DM); kwargs...) = Score(Data(DM), Predictor(DM), dPredictor(DM), θ, LogPriorFn; kwargs...)
+Score(DM::AbstractDataModel, θ::AbstractVector{<:Number}; kwargs...) = Score(DM)(θ; kwargs...)
+Score(DM::AbstractDataModel, θ::AbstractVector{<:Number}, LogPriorFn::Union{Nothing,Function}; kwargs...) = throw("No longer used.")
 
 Score(DS::AbstractDataSet, model::ModelOrFunction, dmodel::ModelOrFunction, θ::AbstractVector{<:Number}, LogPriorFn::Nothing; kwargs...) = _Score(DS, model, dmodel, θ; kwargs...)
 Score(DS::AbstractDataSet, model::ModelOrFunction, dmodel::ModelOrFunction, θ::AbstractVector{<:Number}, LogPriorFn::Function; kwargs...) = _Score(DS, model, dmodel, θ; kwargs...) + EvalLogPriorGrad(LogPriorFn, θ)

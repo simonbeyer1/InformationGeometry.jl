@@ -139,10 +139,10 @@ Calculates a direction (in parameter space) in which the value of the log-likeli
 `ADmode=Val(false)` computes the Score by separately evaluating the `model` as well as the Jacobian `dmodel` provided in `DM`.
 Other choices of `ADmode` directly compute the Score by differentiating the formula the log-likelihood, i.e. only one evaluation on a dual variable is performed.
 """
-function OrthVF(DM::AbstractDataModel, θ::AbstractVector{<:Number}; alpha::AbstractVector=GetAlpha(length(θ)), ADmode::Val=Val(:ForwardDiff), kwargs...)
+function OrthVF(DM::AbstractDataModel, θ::AbstractVector{<:Number}; alpha::AbstractVector=GetAlpha(length(θ)), kwargs...)
     length(θ) < 2 && throw(ArgumentError("dim(Parameter Space) < 2  --> No orthogonal VF possible."))
     # Mutate alpha and return it to avoid further allocations
-    S = -Score(DM, θ; ADmode=ADmode, kwargs...);    P = prod(S)
+    S = -Score(DM, θ; kwargs...);    P = prod(S)
     alpha .*= P;    alpha ./= S;    normalize!(alpha);    alpha
 end
 OrthVF(DM::AbstractDataModel; Kwargs...) = (args...; kwargs...)->OrthVF(DM, args...; Kwargs..., kwargs...)
@@ -155,8 +155,8 @@ Since a 2D `Plane` is specified, both the input `θ` as well as well as the outp
 `ADmode=Val(false)` computes the Score by separately evaluating the `model` as well as the Jacobian `dmodel` provided in `DM`.
 Other choices of `ADmode` directly compute the Score by differentiating the formula the log-likelihood, i.e. only one evaluation on a dual variable is performed.
 """
-function OrthVF(DM::AbstractDataModel, PL::Plane, θ::AbstractVector{<:Number}, PlanarLogPrior::Union{Nothing,Function}=EmbedLogPrior(DM,PL); ADmode::Val=Val(:ForwardDiff), kwargs...)
-    S = transpose(Projector(PL)) * (-Score(Data(DM), Predictor(DM), dPredictor(DM), PlaneCoordinates(PL,θ), PlanarLogPrior; ADmode=ADmode, kwargs...))
+function OrthVF(DM::AbstractDataModel, PL::Plane, θ::AbstractVector{<:Number}, PlanarLogPrior::Union{Nothing,Function}=EmbedLogPrior(DM,PL); kwargs...)
+    S = transpose(Projector(PL)) * (-Score(Data(DM), Predictor(DM), dPredictor(DM), PlaneCoordinates(PL,θ), PlanarLogPrior; kwargs...))
     P = prod(S);    normalize(SA[-P/S[1],P/S[2]])
 end
 
@@ -166,8 +166,8 @@ Calculates a direction (in parameter space) in which the value of the log-likeli
 `ADmode=Val(false)` computes the Score by separately evaluating the `model` as well as the Jacobian `dmodel` provided in `DM`.
 Other choices of `ADmode` directly compute the Score by differentiating the formula the log-likelihood, i.e. only one evaluation on a dual variable is performed.
 """
-function OrthVF!(du::AbstractVector, DM::AbstractDataModel, θ::AbstractVector; alpha::AbstractVector=GetAlpha(length(θ)), ADmode::Val=Val(:ForwardDiff), kwargs...)
-    _turn!(du, -Score(DM, θ; ADmode=ADmode, kwargs...), alpha)
+function OrthVF!(du::AbstractVector, DM::AbstractDataModel, θ::AbstractVector; alpha::AbstractVector=GetAlpha(length(θ)), kwargs...)
+    _turn!(du, -Score(DM, θ; kwargs...), alpha)
 end
 
 # Method for general functions F

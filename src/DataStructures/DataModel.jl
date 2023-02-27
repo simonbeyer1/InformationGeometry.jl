@@ -50,8 +50,8 @@ struct DataModel <: AbstractDataModel
     MLE::AbstractVector{<:Number}
     LogLikeMLE::Real
     LogPrior::Union{Function,Nothing}
-    # LogLikelihoodFn::Function
-    # ScoreFn::Function
+    LogLikelihoodFn::Function
+    ScoreFn::Function
     DataModel(DF::DataFrame, args...; kwargs...) = DataModel(DataSet(DF), args...; kwargs...)
     function DataModel(DS::AbstractDataSet,model::ModelOrFunction,SkipTests::Bool=false; custom::Bool=iscustom(model), ADmode::Union{Symbol,Val}=Val(:ForwardDiff),kwargs...)
         DataModel(DS,model,DetermineDmodel(DS,model; custom=custom, ADmode=ADmode), SkipTests; ADmode=ADmode, kwargs...)
@@ -79,18 +79,24 @@ struct DataModel <: AbstractDataModel
     end
     # Block kwargs here.
     function DataModel(DS::AbstractDataSet,model::ModelOrFunction,dmodel::ModelOrFunction,MLE::AbstractVector{<:Number},LogLikeMLE::Real,LogPriorFn::Union{Function,Nothing},SkipTests::Bool=false;
-                                            name::Union{Symbol,String}=Symbol(), ADmode::Union{Symbol,Val}=Val(:ForwardDiff))
+                                            ADmode::Union{Symbol,Val}=Val(:ForwardDiff), kwargs...)
+
+        NewLogPriorFn = Prior(LogPriorFn, MLE)
+        LogLikelihoodFn = GetLogLikelihoodFn(DS, model, NewLogPriorFn)
+        ScoreFn = GetScoreFn(DS, model, dmodel, NewLogPriorFn, LogLikelihoodFn; ADmode=ADmode)
+        DataModel(DS, model, dmodel, MLE, LogLikeMLE, LogPriorFn, LogLikelihoodFn, ScoreFn, SkipTests; kwargs...)
+    end
+    function DataModel(DS::AbstractDataSet, model::ModelOrFunction, dmodel::ModelOrFunction, MLE::AbstractVector{<:Number}, LogLikeMLE::Real, LogPriorFn::Union{Function,Nothing}, LogLikelihoodFn::Function, ScoreFn::Function, skipTests::Bool=false;
+                                SkipTests::Bool=skipTests, name::Union{Symbol,String}=Symbol())
         length(string(name)) > 0 && (@warn "DataModel does not have own 'name' field, forwarding to model.";    model=Christen(model, name))
+        @warn "Need to extend tests."
         # length(MLE) < 20 && (MLE = SVector{length(MLE)}(MLE))
-        !SkipTests && TestDataModel(DS, model, dmodel, MLE, LogLikeMLE, LogPriorFn)
-        NewLogPriorFn = Prior(LogPriorFn,MLE)
-        # LogLikelihoodFn = GetLogLikelihoodFn(DS,model,NewLogPriorFn)
-        # ScoreFn = GetScoreFn(DS,model,dmodel,NewLogPriorFn,LogLikelihoodFn; ADmode=ADmode)
-        new(DS, model, dmodel, MLE, LogLikeMLE, NewLogPriorFn) #, LogLikelihoodFn, ScoreFn)
+        !SkipTests && TestDataModel(DS, model, dmodel, MLE, LogLikeMLE, LogPriorFn, LogLikelihoodFn, ScoreFn)
+        new(DS, model, dmodel, MLE, LogLikeMLE, LogPriorFn, LogLikelihoodFn, ScoreFn)
     end
 end
 
-function TestDataModel(DS::AbstractDataSet,model::ModelOrFunction,dmodel::ModelOrFunction,MLE::AbstractVector{<:Number},LogLikeMLE::Real,LogPriorFn::Union{Function,Nothing}=nothing)
+function TestDataModel(DS::AbstractDataSet,model::ModelOrFunction,dmodel::ModelOrFunction,MLE::AbstractVector{<:Number},LogLikeMLE::Real,LogPriorFn::Union{Function,Nothing}, LogLikelihoodFn::Function, ScoreFn::Function)
     CheckModelHealth(DS, model)
     if model isa ModelMap
         !IsInDomain(model, MLE) && @warn "Supposed MLE $MLE not inside valid parameter domain specified for ModelMap. Consider specifying an appropriate intial parameter configuration."
@@ -99,7 +105,7 @@ function TestDataModel(DS::AbstractDataSet,model::ModelOrFunction,dmodel::ModelO
         @assert LogPriorFn(MLE) isa Real && LogPriorFn(MLE) ≤ 0.0
         !all(x->x ≤ 0.0, eigvals(EvalLogPriorHess(LogPriorFn, MLE))) && @warn "Hessian of specified LogPrior does not appear to be negative-semidefinite at MLE."
     end
-    S = Score(DS, model, dmodel, MLE, LogPriorFn)
+    S = ScoreFn(MLE)
     norm(S) > sqrt(length(MLE)*1e-5) && @warn "Norm of gradient of log-likelihood at supposed MLE $MLE comparatively large: $(norm(S))."
     g = FisherMetric(DS, model, dmodel, MLE, LogPriorFn)
     det(g) == 0. && @warn "Model appears to contain superfluous parameters since it is not structurally identifiable at supposed MLE $MLE."
@@ -114,9 +120,9 @@ dmodel::ModelOrFunction=(x,p)->[-Inf],
 MLE::AbstractVector{<:Number}=[-Inf],
 LogLikeMLE::Real=-Inf,
 LogPrior::Union{Function,Nothing}=nothing,
-# LogLikelihoodFn::Function=p->0.0,
-# ScoreFn::Function=p->ones(length(p))
-) = DataModel(Data, model, dmodel, MLE, LogLikeMLE, LogPrior) #, LogLikelihoodFn, ScoreFn)
+LogLikelihoodFn::Function=p->0.0,
+ScoreFn::Function=p->ones(length(p))
+) = DataModel(Data, model, dmodel, MLE, LogLikeMLE, LogPrior, LogLikelihoodFn, ScoreFn)
 
 
 # Specialized methods for DataModel
@@ -125,8 +131,8 @@ Data(DM::DataModel) = DM.Data
 Predictor(DM::DataModel) = DM.model
 dPredictor(DM::DataModel) = DM.dmodel
 LogPrior(DM::DataModel) = DM.LogPrior
-# loglikelihood(DM::DataModel) = DM.LogLikelihoodFn
-# Score(DM::DataModel) = DM.ScoreFn
+loglikelihood(DM::DataModel) = DM.LogLikelihoodFn
+Score(DM::DataModel) = DM.ScoreFn
 
 """
     MLE(DM::DataModel) -> Vector
