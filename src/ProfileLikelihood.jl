@@ -343,9 +343,12 @@ function GetProfile(DM::AbstractDataModel, Comp::Int, ps::AbstractVector{<:Real}
             approx_PL_curvature((x1, x2, x3), (y1, y2, y3)) = @fastmath 2 * (y1 * (x2 - x3) + y2 * (x3 - x1) + y3 * (x1 - x2)) / ((x1 - x2) * (x2 - x3) * (x3 - x1))
             
             maxstepnumber = N
-            Fi = isnothing(Fisher) ? AutoMetric(DM, MLE(DM))[Comp,Comp] : Fisher[Comp,Comp]
+
+            # Fi = isnothing(Fisher) ? AutoMetric(DM, MLE(DM))[Comp,Comp] : Fisher[Comp,Comp]
+            isnothing(Fisher) && (Fisher = AutoMetric(DM, MLE(DM)))
+            max_local_curvature = Fisher |> eigen |> x -> maximum(abs.(x.values))
             # Calculate initial stepsize based on curvature from fisher information
-            initialδ = clamp(5 * sqrt(IC) / (maxstepnumber * (0.1 + sqrt(Fi))) , 1e-12, 1)
+            initialδ = clamp(5 * sqrt(IC) / (maxstepnumber * (0.1 + sqrt(max_local_curvature))) , 1e-12, 1);
 
             δ = initialδ
             minstep = 1e-2 * initialδ
@@ -385,11 +388,17 @@ function GetProfile(DM::AbstractDataModel, Comp::Int, ps::AbstractVector{<:Real}
                     # Do the actual profile point calculation using the value p
                     PerformStep!!!(Res, MLEstash, Converged, visitedps, path, priors, p)
 
+                    # ## Early termination if profile flat or already wide enough
+                    # if right
+                    #     (length(visitedps) - len > maxstepnumber/2 || p ≥ ParamBounds[2] || p > MLE(DM)[Comp] + 5*maxstepnumber*initialδ) && break
+                    # else
+                    #     (length(visitedps) - len > maxstepnumber/2 || p ≤ ParamBounds[1] || p < MLE(DM)[Comp] - 5*maxstepnumber*initialδ) && break
+                    # end
                     ## Early termination if profile flat or already wide enough
                     if right
-                        (length(visitedps) - len > maxstepnumber/2 || p ≥ ParamBounds[2] || p > MLE(DM)[Comp] + 5*maxstepnumber*initialδ) && break
+                        (length(visitedps) - len > maxstepnumber/2 || p ≥ ParamBounds[2]) && break
                     else
-                        (length(visitedps) - len > maxstepnumber/2 || p ≤ ParamBounds[1] || p < MLE(DM)[Comp] - 5*maxstepnumber*initialδ) && break
+                        (length(visitedps) - len > maxstepnumber/2 || p ≤ ParamBounds[1]) && break
                     end
                 end
             end
