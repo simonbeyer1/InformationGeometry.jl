@@ -10,11 +10,16 @@ struct Plane
     Vx::AbstractVector
     Vy::AbstractVector
     Projector::AbstractMatrix
-    function Plane(stütz::AbstractVector{<:Number}, Vx::AbstractVector{<:Number}, Vy::AbstractVector{<:Number}; Make2ndOrthogonal::Bool=true)
+    function Plane(stütz::AbstractVector{<:Number}, Vx::AbstractVector{<:Number}, Vy::AbstractVector{<:Number}; MakeOrthogonal::Bool=false, Normalize::Bool=false)
         if length(stütz) == 2 stütz = [stütz[1],stütz[2],0] end
         !(length(stütz) == length(Vx) == length(Vy)) && throw("Dimension mismatch. length(stütz) = $(length(stütz)), length(Vx) = $(length(Vx)), length(Vy) = $(length(Vy))")
 
-        (Make2ndOrthogonal && abs(dot(Vx,Vy)) > 4e-15) && return Plane(stütz, Vx, Make2ndOrthogonal(Vx,Vy))
+        (MakeOrthogonal && abs(dot(Vx,Vy)) > 4e-15) && return Plane(stütz, Vx, Make2ndOrthogonal(Vx,Vy); MakeOrthogonal, Normalize)
+
+        if Normalize
+            norm(Vx) != 1.0 && (Vx = normalize(Vx))
+            norm(Vy) != 1.0 && (Vy = normalize(Vy))
+        end
 
         if length(stütz) < 20
             stütz = SVector{length(Vx)}(floatify(stütz));     Vx = SVector{length(Vx)}(floatify(Vx))
@@ -31,7 +36,6 @@ struct Plane
     end
 end
 Projector(PL::Plane) = PL.Projector
-
 Base.length(PL::Plane) = length(PL.stütz)
 
 function MLEinPlane(DM::AbstractDataModel, PL::Plane, start::AbstractVector{<:Number}=0.0001rand(2); tol::Real=1e-8)
@@ -47,13 +51,12 @@ function MLEinPlane(DM::AbstractDataModel, PL::Plane, start::AbstractVector{<:Nu
     end
 end
 
-function PlanarDataModel(DM::AbstractDataModel, PL::Plane)
+function PlanarDataModel(DM::AbstractDataModel, PL::Plane, mle::AbstractVector{<:Number}=ProjectOntoPlane(PL, MLE(DM)))
     @assert DM isa DataModel
     model = Predictor(DM);      dmodel = dPredictor(DM)
     newmod = (x,θ::AbstractVector{<:Number}; kwargs...) -> model(x, PlaneCoordinates(PL,θ); kwargs...)
     dnewmod = (x,θ::AbstractVector{<:Number}; kwargs...) -> dmodel(x, PlaneCoordinates(PL,θ); kwargs...) * Projector(PL)
     PlanarLogPrior = EmbedLogPrior(DM, PL)
-    mle = MLEinPlane(DM, PL)
     DataModel(Data(DM), newmod, dnewmod, mle, loglikelihood(DM, PlaneCoordinates(PL, mle), PlanarLogPrior), PlanarLogPrior, true)
 end
 
@@ -130,16 +133,18 @@ end
 """
     PlaneCoordinates(PL::Plane, v::AbstractVector{<:Number})
 Returns an n-dimensional vector from a tuple of two real numbers which correspond to the coordinates in the 2D `Plane`.
+That is, `PlanarCoordinates` provides an embedding of the plane parameters into the ambient space.
+The inverse function is given by [DecomposeWRTPlane](@ref).
 """
-PlaneCoordinates(PL::Plane, v::AbstractVector) = muladd(Projector(PL), v, PL.stütz)
-function PlaneCoordinates(PL::Plane)
-    PlanarCoordinates(v::AbstractVector) = muladd(Projector(PL), v, PL.stütz)
-    PlanarCoordinates(Res::AbstractVector, v::AbstractVector) = muladd!(Res, Projector(PL), v, PL.stütz)
+PlaneCoordinates(PL::Plane, v::AbstractVector, Proj::AbstractMatrix=Projector(PL)) = muladd(Proj, v, PL.stütz)
+function PlaneCoordinates(PL::Plane, Proj::AbstractMatrix=Projector(PL))
+    PlanarCoordinates(v::AbstractVector) = muladd(Proj, v, PL.stütz)
+    PlanarCoordinates(Res::AbstractVector, v::AbstractVector) = muladd!(Res, Proj, v, PL.stütz)
 end
 
 ShiftTo(PlaneBegin::Plane, PlaneEnd::Plane) = TranslatePlane(PlaneEnd, PlaneEnd.stütz - PlaneBegin.stütz)
 
-IsOnPlane(PL::Plane, x::AbstractVector, ProjectionOp::AbstractMatrix=ProjectionOperator(PL))::Bool = DistanceToPlane(PL, x, ProjectionOp) < 4e-15
+IsOnPlane(PL::Plane, x::AbstractVector, ProjectionOp::AbstractMatrix=ProjectionOperator(PL))::Bool = DistanceToPlane(PL, x, ProjectionOp) < 1e-14
 TranslatePlane(PL::Plane, v::AbstractVector) = Plane(PL.stütz + v, PL.Vx, PL.Vy, Projector(PL))
 RotatePlane(PL::Plane, rads::Real=π/2) = ((S,C) = sincos(rads);   Plane(PL.stütz, C*PL.Vx + S*PL.Vy, C*PL.Vy - S*PL.Vx))
 function RotationMatrix(PL::Plane, rads::Real)
@@ -155,14 +160,19 @@ function RotatedVector(α::Real, n1::Int, n2::Int, tot::Int)
 end
 
 
+"""
+    DecomposeWRTPlane(PL::Plane, x::AbstractVector)
+Takes vector from ambient space which is also element of the given plane and returns its coordinates with respect to the plane basis.
+That is, `DecomposeWRTPlane` is the inverse of the plane embedding function [PlanarCoordinates](@ref).
+"""
 function DecomposeWRTPlane(PL::Plane, x::AbstractVector)
     @assert IsOnPlane(PL,x)
     V = x - PL.stütz
-    SA[dot(V, PL.Vx), dot(V, PL.Vy)]
+    SA[dot(V, PL.Vx)/dot(PL.Vx, PL.Vx), dot(V, PL.Vy)/dot(PL.Vy, PL.Vy)]
 end
 
 DistanceToPlane(PL::Plane, x::AbstractVector, ProjectionOp::AbstractMatrix=ProjectionOperator(PL)) = (Diagonal(ones(length(x))) - ProjectionOp) * (x - PL.stütz) |> norm
-ProjectOntoPlane(PL::Plane, x::AbstractVector, ProjectionOp::AbstractMatrix=ProjectionOperator(PL)) = ProjectionOp * (x - PL.stütz) + PL.stütz
+ProjectOntoPlane(PL::Plane, x::AbstractVector, ProjectionOp::AbstractMatrix=ProjectionOperator(PL)) = muladd(ProjectionOp, x .- PL.stütz, PL.stütz)
 
 function ProjectionOperator(A::AbstractMatrix)
     # size(A,2) != 2 && @warn "ProjectionOperator: Matrix size $(size(A)) not as expected."
@@ -182,11 +192,8 @@ end
     MinimizeOnPlane(PL::Plane,F::Function,initial::AbstractVector=[1,-1.]; tol::Real=1e-5)
 Minimizes given function in Plane and returns the optimal point in the ambient space in which the plane lies.
 """
-function MinimizeOnPlane(PL::Plane, F::Function, initial::AbstractVector=[1e-2,-1e-2]; tol::Real=1e-5, meth::Optim.AbstractOptimizer=LBFGS(), kwargs...)
-    # G(x) = F(PlaneCoordinates(PL,x))
-    X = InformationGeometry.minimize(F∘PlaneCoordinates(PL), initial; tol=tol, meth=meth, kwargs...)
-    # X = Optim.minimizer(optimize(G,initial, BFGS(), Optim.Options(g_tol=tol), autodiff = :forward))
-    PlaneCoordinates(PL,X)
+function MinimizeOnPlane(PL::Plane, F::Function, initial::AbstractVector=1e-4rand(2); tol::Real=1e-5, kwargs...)
+    PlaneCoordinates(PL, InformationGeometry.minimize(F∘PlaneCoordinates(PL), initial; Full=false, tol, kwargs...))
 end
 
 """
@@ -261,15 +268,15 @@ CubeWidths(X)
 struct HyperCube{Q<:AbstractVector{<:Number}} <: Cuboid
     L::Q
     U::Q
-    HyperCube(C::HyperCube; Padding::Number=0.) = HyperCube(C.L, C.U; Padding=Padding)
-    function HyperCube(lowers::AbstractVector{<:Number}, uppers::AbstractVector{<:Number}; Padding::Number=0.)
+    HyperCube(C::HyperCube; kwargs...) = HyperCube(C.L, C.U; kwargs...)
+    function HyperCube(lowers::AbstractVector{<:Number}, uppers::AbstractVector{<:Number}; Padding::Number=0.0, MakeStatic::Bool=true)
         @assert length(lowers) == length(uppers)
         if Padding != 0.
             diff = (0.5*Padding) * (uppers - lowers)
             lowers -= diff;     uppers += diff
         end
         !all(lowers .≤ uppers) && throw("First argument of HyperCube must be larger than second.")
-        if length(lowers) < 20
+        if MakeStatic && length(lowers) < 20
             A, B = SVector{length(lowers)}(floatify(lowers)), SVector{length(uppers)}(floatify(uppers))
             return new{typeof(A)}(A, B)
         else
@@ -277,19 +284,19 @@ struct HyperCube{Q<:AbstractVector{<:Number}} <: Cuboid
             return new{typeof(A)}(A, B)
         end
     end
-    function HyperCube(H::AbstractVector{<:AbstractVector{<:Number}}; Padding::Number=0.)
+    function HyperCube(H::AbstractVector{<:AbstractVector{<:Number}}; kwargs...)
         len = length(H[1]);        !all(x->(length(x) == len),H) && throw("Inconsistent lengths.")
-        M = Unpack(H);        HyperCube(M[:,1],M[:,2]; Padding=Padding)
+        M = Unpack(H);        HyperCube(view(M,:,1), view(M,:,2); kwargs...)
     end
-    function HyperCube(T::AbstractVector{<:Tuple{<:Real,<:Real}}; Padding::Number=0.)
-        HyperCube([T[i][1] for i in eachindex(T)], [T[i][2] for i in eachindex(T)]; Padding=Padding)
+    function HyperCube(T::AbstractVector{<:Tuple{<:Real,<:Real}}; kwargs...)
+        HyperCube([T[i][1] for i in eachindex(T)], [T[i][2] for i in eachindex(T)]; kwargs...)
     end
-    function HyperCube(vals::AbstractVector{<:Number}; Padding::Number=0.)
+    function HyperCube(vals::AbstractVector{<:Number}; kwargs...)
         length(vals) != 2 && throw("Input has too many components.")
-        HyperCube([vals[1]],[vals[2]]; Padding=Padding)
+        HyperCube(SA[vals[1]], SA[vals[2]]; kwargs...)
     end
-    HyperCube(vals::Tuple{<:Number,<:Number}; Padding::Number=0.) = HyperCube([vals[1]],[vals[2]]; Padding=Padding)
-    HyperCube(center::AbstractVector{<:Number}, width::Real) = HyperCube(center .- (width/2), center .+ (width/2))
+    HyperCube(vals::Tuple{<:Number,<:Number}; kwargs...) = HyperCube(SA[vals[1]], SA[vals[2]]; kwargs...)
+    HyperCube(center::AbstractVector{<:Number}, width::Real; kwargs...) = HyperCube(center .- (width/2), center .+ (width/2); kwargs...)
 
     function HyperCube(D::AbstractDict{T,<:Tuple{<:Number,<:Number}}, X::AbstractVector{T}; kwargs...) where T
         Tups = [D[x] for x in X];    HyperCube(getindex.(Tups,1), getindex.(Tups,2); kwargs...)
@@ -302,7 +309,6 @@ end
 Base.length(Cube::HyperCube) = length(Cube.L)
 Base.keys(Cube::HyperCube) = Base.OneTo(length(Cube.L))
 
-
 """
     in(p::AbstractVector{<:Number}, Cube::HyperCube) -> Bool
 Checks whether a point `p` lies inside `Cube`.
@@ -313,23 +319,23 @@ Base.in(p::AbstractVector{<:Number}, Cube::HyperCube) = all(Cube.L .≤ p .≤ C
     ConstructCube(M::Matrix{<:Number}; Padding::Number=1/50) -> HyperCube
 Returns a `HyperCube` which encloses the extrema of the columns of the input matrix.
 """
-ConstructCube(M::AbstractMatrix{<:Number}; Padding::Number=0.) = @views HyperCube([minimum(M[:,i]) for i in axes(M,2)], [maximum(M[:,i]) for i in axes(M,2)]; Padding=Padding)
-ConstructCube(V::AbstractVector{<:Number}; Padding::Number=0.) = HyperCube(extrema(V); Padding=Padding)
+ConstructCube(M::AbstractMatrix{<:Number}; kwargs...) = @views HyperCube([minimum(M[:,i]) for i in axes(M,2)], [maximum(M[:,i]) for i in axes(M,2)]; kwargs...)
+ConstructCube(V::AbstractVector{<:Number}; kwargs...) = HyperCube(extrema(V); kwargs...)
 ConstructCube(PL::Plane, sol::AbstractODESolution, Npoints::Int=300; N::Int=Npoints, Padding::Number=0.) = ConstructCube(Deplanarize(PL, sol; N=N); Padding=Padding)
-ConstructCube(Ps::AbstractVector{<:AbstractVector{<:Number}}; Padding::Number=0.) = ConstructCube(Unpack(Ps); Padding=Padding)
+ConstructCube(Ps::AbstractVector{<:AbstractVector{<:Number}}; kwargs...) = ConstructCube(Unpack(Ps); kwargs...)
 
 # Could speed this up by just using the points in sol.u without interpolation.
-function ConstructCube(sol::AbstractODESolution, Npoints::Int=300; N::Int=Npoints, Padding::Number=0.)
-    ConstructCube(Unpack(map(sol,range(sol.t[1],sol.t[end];length=N))); Padding=Padding)
+function ConstructCube(sol::AbstractODESolution, Npoints::Int=300; N::Int=Npoints, kwargs...)
+    ConstructCube(Unpack(map(sol,range(sol.t[1],sol.t[end];length=N))); kwargs...)
 end
-function ConstructCube(sols::AbstractVector{<:AbstractODESolution}, Npoints::Int=300; N::Int=Npoints, Padding::Number=0.)
-    mapreduce(sol->ConstructCube(sol; N=N, Padding=Padding), union, sols)
+function ConstructCube(sols::AbstractVector{<:AbstractODESolution}, Npoints::Int=300; N::Int=Npoints, kwargs...)
+    mapreduce(sol->ConstructCube(sol; N, kwargs...), union, sols)
 end
 
 ConstructCube(Tup::Tuple{AbstractVector{<:Plane},AbstractVector{<:AbstractODESolution}}; kwargs...) = ConstructCube(Tup[1], Tup[2]; kwargs...)
-function ConstructCube(Planes::AbstractVector{<:Plane}, sols::AbstractVector{<:AbstractODESolution}; N::Int=300, Padding::Number=0.)
+function ConstructCube(Planes::AbstractVector{<:Plane}, sols::AbstractVector{<:AbstractODESolution}; N::Int=300, kwargs...)
     @assert length(Planes) == length(sols)
-    reduce(union, map((x,y)->ConstructCube(x,y; N=N, Padding=Padding), Planes, sols))
+    reduce(union, map((x,y)->ConstructCube(x,y; N=N, kwargs...), Planes, sols))
 end
 
 """
@@ -492,7 +498,10 @@ Base.exp(C::HyperCube) = HyperCube(exp.(C.L), exp.(C.U))
 Base.exp10(C::HyperCube) = HyperCube(exp10.(C.L), exp10.(C.U))
 
 
+Base.firstindex(Cube::HyperCube) = 1
+Base.lastindex(Cube::HyperCube) = length(Cube)
 Base.getindex(C::HyperCube, i::Int) = (C.L[i], C.U[i])
+Base.getindex(C::HyperCube, ::Colon) = C[1:end]
 Base.getindex(C::HyperCube, inds::AbstractVector{<:Int}) = HyperCube(C.L[inds], C.U[inds])
 
 struct EmbeddedODESolution{T,N,uType,uType2,EType,tType,rateType,P,A,IType,DE} <: AbstractODESolution{T,N,uType}
