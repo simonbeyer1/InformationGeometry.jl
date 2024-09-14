@@ -303,18 +303,61 @@ function GetConstraintFunc(M::ModelMap, startp::AbstractVector{<:Number}=GetStar
     end
 end
 
-function minimize(DM::AbstractDataModel, start::AbstractVector{<:Number}=MLE(DM); Lifted::Bool=false, Domain::Union{HyperCube,Nothing}=GetDomain(DM), kwargs...)
-    F = (Lifted && HasXerror(DM)) ? FullLiftedNegLogLikelihood(DM) : Negloglikelihood(DM)
-    # Get constraint function and Hypercube from ModelMap if available?
-    Lcons, Ucons, Cons = GetConstraintFunc(DM, start; inplace=true) # isinplacemodel(DM)
-    isnothing(Cons) ? minimize(F, start, Domain; kwargs...) : minimize(F, start, Domain; lcons=Lcons, ucons=Ucons, cons=Cons, kwargs...)
+function minimize(DM::AbstractDataModel, start::AbstractVector{<:Number}=MLE(DM); Lifted::Bool=false, Domain::Union{HyperCube,Nothing}=GetDomain(DM), meth=nothing, kwargs...)
+    # Check if meth is of type LeastSquaresOptim.AbstractOptimizer
+    if meth isa LeastSquaresOptim.AbstractOptimizer
+        minimizeLeastSquaresOptimJL(Data(DM), Predictor(DM), dPredictor(DM), start, LogPrior(DM), Domain=Domain, lb=(Domain ? Domain.L : []), ub=(Domain ? Domain.U : []), meth=meth, kwargs...)
+    else
+        F = (Lifted && HasXerror(DM)) ? FullLiftedNegLogLikelihood(DM) : Negloglikelihood(DM)
+        # Get constraint function and Hypercube from ModelMap if available?
+        Lcons, Ucons, Cons = GetConstraintFunc(DM, start; inplace=true)
+        isnothing(Cons) ? minimize(F, start, Domain; kwargs...) : minimize(F, start, Domain; lcons=Lcons, ucons=Ucons, cons=Cons, kwargs...)
+    end
 end
 
 # If DM not constructed yet
-function minimize(DS::AbstractDataSet, Model::ModelOrFunction, start::AbstractVector{<:Number}, LogPriorFn::Union{Nothing,Function}; Lifted::Bool=false, Domain::Union{HyperCube,Nothing}=GetDomain(Model), kwargs...)
-    F = (Lifted && HasXerror(DS)) ? FullLiftedNegLogLikelihood(DS,Model,LogPriorFn,length(start)) : (θ->-loglikelihood(DS,Model,θ,LogPriorFn))
-    Lcons, Ucons, Cons = GetConstraintFunc(Model, start; inplace=true) # isinplacemodel(DM)
-    isnothing(Cons) ? minimize(F, start, Domain; kwargs...) : minimize(F, start, Domain; lcons=Lcons, ucons=Ucons, cons=Cons, kwargs...)
+function minimize(DS::AbstractDataSet, Model::ModelOrFunction, start::AbstractVector{<:Number}, LogPriorFn::Union{Nothing,Function}=nothing; Lifted::Bool=false, Domain::Union{HyperCube,Nothing}=GetDomain(Model), meth=nothing, kwargs...)
+    # Check if meth is of type LeastSquaresOptim.AbstractOptimizer
+    if meth isa LeastSquaresOptim.AbstractOptimizer
+        minimizeLeastSquaresOptimJL(DS, Model, dModel=nothing, start, LogPriorFn, Domain=Domain, lb=(Domain ? Domain.L : []), ub=(Domain ? Domain.U : []), meth=meth, kwargs...)
+    else
+        F = (Lifted && HasXerror(DS)) ? FullLiftedNegLogLikelihood(DS, Model, LogPriorFn, length(start)) : (θ->-loglikelihood(DS, Model, θ, LogPriorFn))
+        # Get constraint function and Hypercube from ModelMap if available
+        Lcons, Ucons, Cons = GetConstraintFunc(Model, start; inplace=true)
+        isnothing(Cons) ? minimize(F, start, Domain; kwargs...) : minimize(F, start, Domain; lcons=Lcons, ucons=Ucons, cons=Cons, kwargs...)
+    end
+end
+
+
+
+function minimizeLeastSquaresOptimJL(DS::AbstractDataSet, model::ModelOrFunction, dmodel::ModelOrFunction, initial::AbstractVector{T}=GetStartP(DS,model), LogPriorFn::Union{Nothing,Function}=nothing, 
+    Domain::Union{Nothing, HyperCube}=GetDomain(model), lb=(!isnothing(Domain) ? Domain.L : T[]), ub=(!isnothing(Domain) ? Domain.U : T[]), verbose::Bool=true, tol::Real=1e-8, Full::Bool=false,
+    meth::Union{Nothing, LeastSquaresOptim.AbstractOptimizer} = LeastSquaresOptim.LevenbergMarquardt(LeastSquaresOptim.LSMR()), kwargs...) where T<:Number
+
+    # Warn if a prior function is given (as it won't be used)
+    verbose && !isnothing(LogPriorFn) && @warn "minimizeLeastSquaresOptimJL() cannot account for priors. Throwing away given prior and continuing anyway." # TODOs: make prior possible
+    # Check dataset health (like in curve_fit)
+    LsqFit.check_data_health(xdata(DS), ydata(DS))
+    # Cholesky decomposition of the inverse covariance matrix to account for data uncertainties
+    u = cholesky(yInvCov(DS)).U
+    # Define the residual function f! for the least-squares problem
+    function model_residual!(out, θ)
+        out .= u * (EmbeddingMap(DS, model, θ) - ydata(DS))
+    end
+    # Define the Jacobian function g! (if provided)
+    function model_jacobian!(J, θ)
+        J .= u * EmbeddingMatrix(DS, dmodel, θ)
+    end
+    # Set up the least-squares problem with the function and gradient
+    prob = if isnothing(dmodel)
+        LeastSquaresProblem(x = initial, f! = model_residual!, output_length = length(ydata(DS)), autodiff = :forward)
+    else
+        LeastSquaresProblem(x = initial, f! = model_residual!, g! = model_jacobian!, output_length = length(ydata(DS)))
+    end
+    # Use the given optimizer meth: e.g., LevenbergMarquardt(LeastSquaresOptim.LSMR()), Dogleg(LeastSquaresOptim.QR())
+    result = optimize!(prob, meth; lower = lb, upper = ub, x_tol = tol, f_tol = tol, g_tol = tol)
+     # Return the result of the optimization
+    Full ? result : result.minimizer
 end
 
 

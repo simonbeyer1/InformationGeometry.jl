@@ -267,6 +267,8 @@ function FindMLE(DS::AbstractDataSet, model::ModelOrFunction, dmodel::ModelOrFun
     verbose && HasXerror(DS) && @warn "Ignoring x-uncertainties in maximum likelihood estimation. Can be incorporated using the TotalLeastSquares() method."
     if isnothing(LogPriorFn) && DS isa DataSet && isnothing(meth)
         curve_fit(DS, model, dmodel, start; tol=tol).param
+    elseif meth isa LeastSquaresOptim.AbstractOptimizer
+        InformationGeometry.minimizeLeastSquaresOptimJL(DS, model, dmodel, Start, LogPriorFn, kwargs...)
     else
         NegEll(p::AbstractVector{<:Number}) = -loglikelihood(DS,model,p,LogPriorFn)
         if isnothing(meth)
