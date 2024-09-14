@@ -261,7 +261,7 @@ end
 
 
 function FindMLE(DS::AbstractDataSet, model::ModelOrFunction, dmodel::ModelOrFunction, Start::AbstractVector{<:Number}=GetStartP(DS,model), LogPriorFn::Union{Function,Nothing}=nothing;
-                ADmode::Union{Val,Symbol}=Val(:ForwardDiff), Big::Bool=false, tol::Real=1e-14, meth=nothing, verbose::Bool=true, kwargs...)
+                ADmode::Union{Val,Symbol}=Val(:ForwardDiff), Big::Bool=false, tol::Real=1e-14, meth::Union{Nothing, LeastSquaresOptim.AbstractOptimizer, Optim.AbstractOptimizer}=nothing, verbose::Bool=true, kwargs...)
     start = floatify(Start)
     (Big || tol < 2.3e-15 || suff(start) == BigFloat) && return FindMLEBig(DS, model, start, LogPriorFn)
     verbose && HasXerror(DS) && @warn "Ignoring x-uncertainties in maximum likelihood estimation. Can be incorporated using the TotalLeastSquares() method."
@@ -271,6 +271,8 @@ function FindMLE(DS::AbstractDataSet, model::ModelOrFunction, dmodel::ModelOrFun
         NegEll(p::AbstractVector{<:Number}) = -loglikelihood(DS,model,p,LogPriorFn)
         if isnothing(meth)
             InformationGeometry.minimize(NegEll, GetGrad!(ADmode, NegEll), start, (model isa ModelMap ? Domain(model) : nothing); tol=tol, verbose=verbose, kwargs...)
+        elseif meth isa LeastSquaresOptim.AbstractOptimizer
+            InformationGeometry.minimizeLeastSquaresOptimJL(DS, model, dmodel, Start, LogPriorFn, meth=meth; kwargs...)
         else
             InformationGeometry.minimize(NegEll, GetGrad!(ADmode, NegEll), start, (model isa ModelMap ? Domain(model) : nothing); tol=tol, meth=meth, verbose=verbose, kwargs...)
         end
